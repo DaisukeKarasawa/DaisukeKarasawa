@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
 
       - name: Generate Tetrass SVGs
-        uses: DaisukeKarasawa/tetrass/action@a13faed1fd2b8eb27ab97fa0cf7edbf4620eec2e
+        uses: DaisukeKarasawa/tetrass/action@3d123c38d8bcd819c6ba7a10dcbc7ef7afd53851
         with:
           github_user_name: ${{ github.repository_owner }}
           outputs: |
