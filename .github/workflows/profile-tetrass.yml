@@ -65,6 +65,5 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@04702edda442b2e678b25b537cec683a1493fcb9 # v7
         with:
           commit_message: "chore: update Tetrass SVGs"
-          file_pattern: |
-            img/tetrass.svg
-            img/tetrass-dark.svg
+          # Use a single glob so both assets are staged reliably.
+          file_pattern: img/tetrass*.svg
