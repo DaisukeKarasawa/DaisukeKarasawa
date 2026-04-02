@@ -1,6 +1,5 @@
 # Profile Tetrass — 自動SVG更新
-# アクションのSHA更新: 各リポジトリで `git ls-remote <url> refs/tags/<tag>` などで取得し、
-# 下記の `uses: org/repo@<40桁SHA>` を置き換える。
+# アクションは tetrass の main を参照（手動での SHA ピン留め更新は不要）。
 
 name: Profile Tetrass
 
@@ -28,7 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Generate Tetrass SVGs
-        uses: DaisukeKarasawa/tetrass/action@3d123c38d8bcd819c6ba7a10dcbc7ef7afd53851
+        uses: DaisukeKarasawa/tetrass/action@main
         with:
           github_user_name: ${{ github.repository_owner }}
           outputs: |
