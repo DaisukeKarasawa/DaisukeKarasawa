@@ -1,0 +1,145 @@
+# Profile Tetrass の generate / commit 失敗時に Cursor Agent で原因調査・修正し PR を作成する。
+# 必要なリポジトリシークレット: CURSOR_API_KEY（Cursor の API キー）
+
+name: Fix Profile Tetrass Failure
+
+on:
+  workflow_run:
+    workflows:
+      - Profile Tetrass
+    types:
+      - completed
+
+concurrency:
+  group: profile-tetrass-auto-fix-${{ github.event.workflow_run.id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+jobs:
+  cursor-fix:
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'failure' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout failed run commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Cursor の公式手順は `curl https://cursor.com/install | bash`（headless / GitHub Actions 向けドキュメントと同じ）。
+      # 現時点では CI 向けに固定バージョン＋チェックサム検証が公式に提供されていないため、
+      # このワークフローではその方式を採用し、cursor.com のインストーラに依存するサプライチェーン上の判断を受け入れる。
+      - name: Install Cursor CLI
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create fix branch
+        id: branch
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          BRANCH="cursor/fix-profile-tetrass-${RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git checkout -b "$BRANCH"
+          echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      # Write-scoped token is only used here to download logs; the agent step does not receive GH_TOKEN.
+      - name: Fetch failed workflow run logs
+        id: failed_logs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          LOG_FILE="$RUNNER_TEMP/failed-run.log"
+          if ! gh run view "$FAILED_RUN_ID" --log >"$LOG_FILE" 2>&1; then
+            echo "::error::Failed to fetch workflow run logs for FAILED_RUN_ID=${FAILED_RUN_ID}; see ${LOG_FILE} for gh CLI output."
+            exit 1
+          fi
+          if [ ! -s "$LOG_FILE" ]; then
+            echo "::error::Workflow run log file is empty for FAILED_RUN_ID=${FAILED_RUN_ID} at ${LOG_FILE}."
+            exit 1
+          fi
+          echo "path=$LOG_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Run Cursor Agent (investigate and fix)
+        env:
+          # Do not expose repo write token to the agent process (Actions injects GITHUB_TOKEN by default).
+          GITHUB_TOKEN: ''
+          GH_TOKEN: ''
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+          FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          FIX_BRANCH: ${{ steps.branch.outputs.name }}
+          BASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          LOG_FILE: ${{ steps.failed_logs.outputs.path }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CURSOR_API_KEY:-}" ]; then
+            echo "::error::CURSOR_API_KEY is not set. Add it under Repository secrets."
+            exit 1
+          fi
+          agent --print --trust --force --workspace "$GITHUB_WORKSPACE" \
+            "You are fixing a failed GitHub Actions workflow run for this repository.
+
+          Context:
+          - Failed workflow run URL: ${FAILED_RUN_URL}
+          - Failed run id: ${FAILED_RUN_ID}
+          - Current branch (fix branch): ${FIX_BRANCH}
+          - Base ref that failed: ${HEAD_BRANCH}
+          - Base commit SHA at failure: ${BASE_SHA}
+
+          Instructions:
+          1. Read the log file at: ${LOG_FILE} (use shell to cat/tail if needed). Do not rely on gh to fetch logs; full logs are in that file.
+          2. Identify which job failed (generate vs commit) and the root cause.
+          3. Apply minimal, targeted fixes to the repository (workflow files under .github/workflows/, scripts, or config) so the Profile Tetrass workflow can succeed. Do not change unrelated code.
+          4. If the failure cannot be fixed in-repo, make no unrelated edits.
+          5. Stage and commit your changes with a clear message like: fix(ci): address Profile Tetrass workflow failure
+          6. Do not push or open PR yourself; the workflow will push and create the PR.
+
+          After edits, ensure changes are committed on branch ${FIX_BRANCH}."
+
+      - name: Push branch and open pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FIX_BRANCH: ${{ steps.branch.outputs.name }}
+          BASE_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+          BASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          AHEAD="$(git rev-list --count "$BASE_SHA"..HEAD 2>/dev/null || echo 0)"
+          if [ "${AHEAD:-0}" -eq 0 ] && [ -z "$(git status --porcelain)" ]; then
+            echo "No changes after agent run; skipping PR."
+            exit 0
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            git add -A
+            git commit -m "fix(ci): address Profile Tetrass workflow failure"
+          fi
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push -u origin "$FIX_BRANCH"
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$FIX_BRANCH" \
+            --title "fix(ci): Profile Tetrass workflow failure (run ${{ github.event.workflow_run.id }})" \
+            --body "Automated fix attempt after [Profile Tetrass workflow failure](${FAILED_RUN_URL}).
+
+          - Failed run id: \`${{ github.event.workflow_run.id }}\`
+          - Triggering workflow: \`${{ github.event.workflow_run.name }}\`
+
+          Please review changes before merge."
