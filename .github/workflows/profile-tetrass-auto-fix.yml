@@ -34,6 +34,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
 
+      # Cursor の公式手順は `curl https://cursor.com/install | bash`（headless / GitHub Actions 向けドキュメントと同じ）。
+      # 現時点では CI 向けに固定バージョン＋チェックサム検証が公式に提供されていないため、
+      # このワークフローではその方式を採用し、cursor.com のインストーラに依存するサプライチェーン上の判断を受け入れる。
       - name: Install Cursor CLI
         run: |
           curl https://cursor.com/install -fsS | bash
