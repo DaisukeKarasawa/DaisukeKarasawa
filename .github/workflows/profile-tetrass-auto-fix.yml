@@ -68,7 +68,14 @@ jobs:
             exit 1
           fi
           LOG_FILE="$RUNNER_TEMP/failed-run.log"
-          gh run view "$FAILED_RUN_ID" --log >"$LOG_FILE" 2>&1 || true
+          if ! gh run view "$FAILED_RUN_ID" --log >"$LOG_FILE" 2>&1; then
+            echo "::error::Failed to fetch workflow run logs for FAILED_RUN_ID=${FAILED_RUN_ID}; see ${LOG_FILE} for gh CLI output."
+            exit 1
+          fi
+          if [ ! -s "$LOG_FILE" ]; then
+            echo "::error::Workflow run log file is empty for FAILED_RUN_ID=${FAILED_RUN_ID} at ${LOG_FILE}."
+            exit 1
+          fi
           agent --print --trust --force --workspace "$GITHUB_WORKSPACE" \
             "You are fixing a failed GitHub Actions workflow run for this repository.
 
