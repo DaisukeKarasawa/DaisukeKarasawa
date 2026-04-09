@@ -49,7 +49,7 @@ jobs:
         env:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          BRANCH="cursor/fix-profile-tetrass-${RUN_ID}"
+          BRANCH="cursor/fix-profile-tetrass-${RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           git checkout -b "$BRANCH"
           echo "name=${BRANCH}" >> "$GITHUB_OUTPUT"
 
